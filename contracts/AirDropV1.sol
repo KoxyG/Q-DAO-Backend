@@ -1,24 +1,49 @@
-// Importing the necessary libraries
-const { ethers } = require("hardhat");
+// SPDX-License-Identifier: LGPL-3.0-or-later
+pragma solidity 0.8.19;
 
-// The main function for deploying the Airdrop module
-async function main() {
-  // Display a message to indicate the start of the deployment
-  console.log("Deploying AirDrop V2");
+// Importing external modules for access control and token balance handling.
+import {MerkleWhitelisted} from "@dlsl/dev-modules/access-control/MerkleWhitelisted.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {TokenBalance} from "./libs/TokenBalance.sol";
 
-  // Deploying AirDrop V2 contract
-  const AirDropV2 = await ethers.getContractFactory("AirDropV2"); // Get the contract factory
-  const airdropV2 = await AirDropV2.deploy(); // Deploy the AirdropV2 contract
 
-  // Waiting for deployment confirmation
-  await airdropV2.waitForDeployment();
+contract AirDropV1 is MerkleWhitelisted, Ownable {
+    // Events to log airdrop events and reward claims.
+    event RewardClaimed(bytes32 indexed merkleRoot, address indexed account);
+    event AirDropCreated(bytes32 indexed merkleRoot, address indexed rewardToken, uint256 rewardAmount);
 
-  // Getting the deployed AirdropV2 contract address
-  const airdropAddress = await airdropV2.getAddress();
+    // State variables to store reward token address, reward amount, and claimed status.
+    address public rewardToken;
+    uint256 public rewardAmount;
+    mapping(bytes32 => mapping(address => bool)) public isUserClaimed;
 
-  // Log the contract address to the console
-  console.log("AirDrop V2 deployed to:", airdropAddress);
+    // Modifier to check if the user has not claimed the reward.
+    modifier onlyNotClaimed(address account_) {
+        require(
+            !isUserClaimed[getMerkleRoot()][account_],
+            "AirDropV1: account already claimed reward."
+        );
+        _;
+    }
+
+    // Initialize the contract with the reward token, amount, and Merkle root.
+    function create_airdrop(address rewardToken_, uint256 rewardAmount_, bytes32 merkleRoot_) public {
+        _setMerkleRoot(merkleRoot_);
+        rewardToken = rewardToken_;
+        rewardAmount = rewardAmount_;
+        emit AirDropCreated(merkleRoot_, rewardToken_, rewardAmount_);
+    }
+
+    // Function to claim reward for an eligible user with a valid Merkle proof.
+    function claimReward(address account_, bytes32[] calldata merkleProof_) external onlyWhitelistedUser(account_, merkleProof_) onlyNotClaimed(account_) {
+        bytes32 merkleRoot_ = getMerkleRoot();
+        isUserClaimed[merkleRoot_][account_] = true;
+        TokenBalance.sendFunds(rewardToken, account_, rewardAmount);
+        emit RewardClaimed(merkleRoot_, account_);
+    }
+
+    // Function for the contract owner to change the Merkle root for a new airdrop event.
+    function setMerkleRoot(bytes32 merkleRoot_) external onlyOwner {
+        _setMerkleRoot(merkleRoot_);
+    }
 }
-
-// Call the main function to deploy the Airdrop module
-main();
